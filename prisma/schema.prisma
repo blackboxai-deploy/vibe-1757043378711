@@ -1,0 +1,366 @@
+// AnimaGenius Database Schema
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// User Authentication and Management
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  emailVerified        DateTime?
+  name                 String?
+  image                String?
+  password_hash        String?
+  subscriptionTier     SubscriptionTier @default(FREE)
+  subscriptionStatus   String @default("active")
+  paypalSubscriptionId String?
+  isAdmin              Boolean @default(false)
+  isSuperAdmin         Boolean @default(false)
+  lastLogin            DateTime?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  
+  // Relationships
+  accounts             Account[]
+  sessions             Session[]
+  subscriptions        Subscription[]
+  projects             Project[]
+  usageMetrics         UsageMetric[]
+  adminLogs            AdminLog[]
+  notifications        Notification[]
+  
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verificationtokens")
+}
+
+// Subscription Management
+enum SubscriptionTier {
+  FREE
+  STARTER
+  PRO
+  ENTERPRISE
+}
+
+model Subscription {
+  id                    String   @id @default(cuid())
+  userId                String
+  paypalSubscriptionId  String   @unique
+  planId                String
+  status                String
+  currentPeriodStart    DateTime
+  currentPeriodEnd      DateTime
+  cancelAtPeriodEnd     Boolean @default(false)
+  billingCycle          String @default("monthly")
+  amount                Decimal
+  currency              String @default("USD")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paymentHistory PaymentHistory[]
+  
+  @@map("subscriptions")
+}
+
+model PaymentHistory {
+  id               String   @id @default(cuid())
+  subscriptionId   String
+  paypalPaymentId  String   @unique
+  amount           Decimal
+  currency         String
+  status           String
+  paymentMethod    String
+  transactionDate  DateTime
+  createdAt        DateTime @default(now())
+  
+  // Relationships
+  subscription Subscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  
+  @@map("payment_history")
+}
+
+// Project and Content Management
+model Project {
+  id                String   @id @default(cuid())
+  userId            String
+  title             String
+  description       String?
+  folderId          String?
+  status            ProjectStatus @default(DRAFT)
+  processingStatus  ProcessingStatus @default(PENDING)
+  originalFileUrl   String?
+  originalFileName  String?
+  originalFileType  String?
+  originalFileSize  Int?
+  extractedContent  Json?
+  aiScript          Json?
+  videoUrl          String?
+  videoThumbnail    String?
+  videoDuration     Int? // in seconds
+  videoSize         Int? // in bytes
+  videoFormat       String?
+  settings          Json? // video generation settings
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder Folder? @relation(fields: [folderId], references: [id])
+  assets Asset[]
+  renderJobs RenderJob[]
+  
+  @@map("projects")
+}
+
+enum ProjectStatus {
+  DRAFT
+  PROCESSING
+  COMPLETED
+  FAILED
+  ARCHIVED
+}
+
+enum ProcessingStatus {
+  PENDING
+  EXTRACTING
+  ANALYZING
+  GENERATING_SCRIPT
+  CREATING_ASSETS
+  RENDERING
+  COMPLETED
+  FAILED
+}
+
+model Folder {
+  id          String   @id @default(cuid())
+  name        String
+  userId      String
+  parentId    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  // Relationships
+  projects Project[]
+  parent Folder? @relation("FolderHierarchy", fields: [parentId], references: [id])
+  children Folder[] @relation("FolderHierarchy")
+  
+  @@map("folders")
+}
+
+model Asset {
+  id          String   @id @default(cuid())
+  projectId   String
+  type        AssetType
+  name        String
+  url         String
+  thumbnail   String?
+  duration    Int? // for audio/video assets
+  size        Int
+  format      String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+  
+  // Relationships
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  @@map("assets")
+}
+
+enum AssetType {
+  IMAGE
+  AUDIO
+  VIDEO
+  FONT
+  TEMPLATE
+}
+
+// Video Rendering System
+model RenderJob {
+  id              String   @id @default(cuid())
+  projectId       String
+  provider        String // 'synthesia', 'heygen', 'proprietary'
+  status          RenderStatus @default(QUEUED)
+  priority        Int @default(0)
+  progress        Int @default(0)
+  estimatedTime   Int? // in seconds
+  actualTime      Int? // in seconds
+  errorMessage    String?
+  renderSettings  Json
+  outputUrl       String?
+  outputSize      Int?
+  queuePosition   Int?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relationships
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  
+  @@map("render_jobs")
+}
+
+enum RenderStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+// Usage Tracking and Analytics
+model UsageMetric {
+  id           String   @id @default(cuid())
+  userId       String
+  action       UsageAction
+  resourceType String
+  resourceId   String?
+  metadata     Json?
+  cost         Decimal? // processing cost
+  timestamp    DateTime @default(now())
+  
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("usage_metrics")
+}
+
+enum UsageAction {
+  FILE_UPLOAD
+  VIDEO_GENERATION
+  AI_PROCESSING
+  RENDER_REQUEST
+  EXPORT_VIDEO
+  ADMIN_ACTION
+}
+
+// Admin and System Management
+model AdminLog {
+  id         String   @id @default(cuid())
+  adminId    String
+  action     String
+  targetType String
+  targetId   String?
+  details    Json?
+  ipAddress  String?
+  userAgent  String?
+  timestamp  DateTime @default(now())
+  
+  // Relationships
+  admin User @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  
+  @@map("admin_logs")
+}
+
+model SystemConfig {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       String
+  description String?
+  category    String
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+  
+  @@map("system_config")
+}
+
+// Notifications and Communication
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  message   String
+  data      Json?
+  read      Boolean @default(false)
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  
+  // Relationships
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("notifications")
+}
+
+enum NotificationType {
+  VIDEO_COMPLETED
+  VIDEO_FAILED
+  SUBSCRIPTION_UPDATED
+  PAYMENT_SUCCESS
+  PAYMENT_FAILED
+  SYSTEM_ALERT
+  ADMIN_MESSAGE
+}
+
+// Analytics and Reporting
+model AnalyticsEvent {
+  id         String   @id @default(cuid())
+  eventType  String
+  userId     String?
+  sessionId  String?
+  data       Json
+  timestamp  DateTime @default(now())
+  
+  @@map("analytics_events")
+}
+
+// File Processing Metadata
+model FileProcessingLog {
+  id            String   @id @default(cuid())
+  projectId     String
+  fileName      String
+  fileType      String
+  processingStep String
+  status        String
+  errorMessage  String?
+  processingTime Int? // milliseconds
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  
+  @@map("file_processing_logs")
+}
